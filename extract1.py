@@ -1,142 +1,116 @@
-#!/usr/bin/python
+# Paper -> Font and Background Color 
+# Independent Text Binarization
 
-# Processes an image to extract the text portions. Primarily
-# used for pre-processing for performing OCR.
-
-# Based on the paper "Font and Background Color Independent Text Binarization" by
-# T Kasar, J Kumar and A G Ramakrishnan
-# http://www.m.cs.osakafu-u.ac.jp/cbdar2007/proceedings/papers/O1-1.pdf
-
-# Copyright (c) 2012, Jason Funk <jasonlfunk@gmail.com>
-# Permission is hereby granted, free of charge, to any person obtaining a copy of this software
-# and associated documentation files (the "Software"), to deal in the Software without restriction,
-# including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense,
-# and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so,
-# subject to the following conditions:
-#
-# The above copyright notice and this permission notice shall be included in all copies or substantial
-# portions of the Software.
-#
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT
-# LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT.
-# IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
-# WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
-# SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+# using egde boxes to isolate and identify
+# characters; edge boxes with intensity values
+# will be stord in one of the intermediate images
 
 import cv2
 import numpy as np
 import sys
 import os.path
 
+# check args
 if len(sys.argv) != 3:
-    print "%s input_file output_file" % (sys.argv[0])
-    sys.exit()
+	print "%s [input_file] [output_file]" % (sys.argv[0])
+	sys.exit()
 else:
-    input_file = sys.argv[1]
-    output_file = sys.argv[2]
+	input_file = sys.argv[1]
+	output_file = sys.argv[2]
 
 if not os.path.isfile(input_file):
-    print "No such file '%s'" % input_file
-    sys.exit()
+	print "%s file not found" % input_file
+	sys.exit()
 
-DEBUG = 1
-
-
-# Determine pixel intensity
-# Apparently human eyes register colors differently.
-# TVs use this formula to determine
-# pixel intensity = 0.30R + 0.59G + 0.11B
-def ii(xx, yy):
-    global img, img_y, img_x
-    if yy >= img_y or xx >= img_x:
-        #print "pixel out of bounds ("+str(y)+","+str(x)+")"
-        return 0
-    pixel = img[yy][xx]
-    return 0.30 * pixel[2] + 0.59 * pixel[1] + 0.11 * pixel[0]
+# debug flag
+DEBUG = 0
 
 
-# A quick test to check whether the contour is
+# determine the pixel density
+# ref: human eyes register colors differently.
+# pixel intensity: 0.30R + 0.59G + 0.11B
+# x,y are the coordinates of the image
+def pixelIntensity(x, y):
+	global img, img_y, img_x
+	if y >= img_y or x >= img_x:
+		# print "pixel out of bounds ("+str(y)+","+str(x)+")"
+		return 0
+
+	pixel = img[y][x]
+	return 0.30*pixel[2] + 0.59*pixel[1] + 0.11*pixel[0]
+
+
+# checks if contour is
 # a connected shape
-def connected(contour):
-    first = contour[0][0]
-    last = contour[len(contour) - 1][0]
-    return abs(first[0] - last[0]) <= 1 and abs(first[1] - last[1]) <= 1
+def isConnected(contour):
+	first = contour[0][0]
+	last = contour[len(contour)-1][0]
+	return abs(first[0] - last[0]) <= 1 and abs(first[1] - last[1]) <= 1
 
 
-# Helper function to return a given contour
-def c(index):
-    global contours
-    return contours[index]
+# helper function
+# gets the contour at a given index
+def getContour(index):
+	global contours
+	return contours[index]
 
 
-# Count the number of real children
-def count_children(index, h_, contour):
-    # No children
-    if h_[index][2] < 0:
-        return 0
-    else:
-        #If the first child is a contour we care about
-        # then count it, otherwise don't
-        if keep(c(h_[index][2])):
-            count = 1
-        else:
-            count = 0
+# count the number of real children
+def countChildren(index, h_, contour):
+	# no children
+	if h_[index][2] < 0:
+		return 0
+	else:
+		# if the first child is a contour
+		# we care about, then count it,
+		# otherwise don't
+		if keep(getContour(h_[index][2])):
+			count = 1
+		else:
+			count = 0
 
-            # Also count all of the child's siblings and their children
-        count += count_siblings(h_[index][2], h_, contour, True)
-        return count
+		# count all of the child's siblings
+		# and their children
+		count += countSiblings(h_[index][2], h_, contour, True)
 
-
-# Quick check to test if the contour is a child
-def is_child(index, h_):
-    return get_parent(index, h_) > 0
-
-
-# Get the first parent of the contour that we care about
-def get_parent(index, h_):
-    parent = h_[index][3]
-    while not keep(c(parent)) and parent > 0:
-        parent = h_[parent][3]
-
-    return parent
 
 
 # Count the number of relevant siblings of a contour
-def count_siblings(index, h_, contour, inc_children=False):
+def countSiblings(index, h_, contour, inc_children=False):
     # Include the children if necessary
     if inc_children:
-        count = count_children(index, h_, contour)
+        count = countChildren(index, h_, contour)
     else:
         count = 0
 
     # Look ahead
     p_ = h_[index][0]
     while p_ > 0:
-        if keep(c(p_)):
+        if keep(getContour(p_)):
             count += 1
         if inc_children:
-            count += count_children(p_, h_, contour)
+            count += countChildren(p_, h_, contour)
         p_ = h_[p_][0]
 
     # Look behind
     n = h_[index][1]
     while n > 0:
-        if keep(c(n)):
+        if keep(getContour(n)):
             count += 1
         if inc_children:
-            count += count_children(n, h_, contour)
+            count += countChildren(n, h_, contour)
         n = h_[n][1]
     return count
 
 
-# Whether we care about this contour
+# whether we care about this contour
 def keep(contour):
-    return keep_box(contour) and connected(contour)
+    return keepBox(contour) and isConnected(contour)
 
 
 # Whether we should keep the containing box of this
 # contour based on it's shape
-def keep_box(contour):
+def keepBox(contour):
     xx, yy, w_, h_ = cv2.boundingRect(contour)
 
     # width and height need to be floats
@@ -160,21 +134,35 @@ def keep_box(contour):
     return True
 
 
-def include_box(index, h_, contour):
+# whether contour is a child
+def isChild(index, h_):
+    return getParent(index, h_) > 0
+
+
+# get contour's parent
+def getParent(index, h_):
+	parent = h_[index][3]
+	while not keep(getContour(parent)) and parent > 0:
+		parent = h_[parent][3]
+
+	return parent
+
+
+def includeBox(index, h_, contour):
     if DEBUG:
         print str(index) + ":"
-        if is_child(index, h_):
+        if isChild(index, h_):
             print "\tIs a child"
-            print "\tparent " + str(get_parent(index, h_)) + " has " + str(
-                count_children(get_parent(index, h_), h_, contour)) + " children"
-            print "\thas " + str(count_children(index, h_, contour)) + " children"
+            print "\tparent " + str(getParent(index, h_)) + " has " + str(
+                countChildren(getParent(index, h_), h_, contour)) + " children"
+            print "\thas " + str(countChildren(index, h_, contour)) + " children"
 
-    if is_child(index, h_) and count_children(get_parent(index, h_), h_, contour) <= 2:
+    if isChild(index, h_) and countChildren(getParent(index, h_), h_, contour) <= 2:
         if DEBUG:
             print "\t skipping: is an interior to a letter"
         return False
 
-    if count_children(index, h_, contour) > 2:
+    if countChildren(index, h_, contour) > 2:
         if DEBUG:
             print "\t skipping, is a container of letters"
         return False
@@ -183,31 +171,33 @@ def include_box(index, h_, contour):
         print "\t keeping"
     return True
 
-# Load the image
-orig_img = cv2.imread(input_file)
 
-# Add a border to the image for processing sake
-img = cv2.copyMakeBorder(orig_img, 50, 50, 50, 50, cv2.BORDER_CONSTANT)
+# load image
+originalImg = cv2.imread(input_file)
 
-# Calculate the width and height of the image
+# surround image with border
+# ensuring bounds for processing
+img = cv2.copyMakeBorder(originalImg, 50, 50, 50, 50, cv2.BORDER_CONSTANT)
+
+# get width and height of image
 img_y = len(img)
 img_x = len(img[0])
 
 if DEBUG:
     print "Image is " + str(len(img)) + "x" + str(len(img[0]))
 
-#Split out each channel
+# split into (R,G,B)
 blue, green, red = cv2.split(img)
 
-# Run canny edge detection on each channel
-blue_edges = cv2.Canny(blue, 200, 250)
-green_edges = cv2.Canny(green, 200, 250)
-red_edges = cv2.Canny(red, 200, 250)
+# edge detection using canny edge detection algorithm
+blue = cv2.Canny(blue, 200, 250)
+green = cv2.Canny(green, 200, 250)
+red = cv2.Canny(red, 200, 250)
 
 # Join edges back into image
-edges = blue_edges | green_edges | red_edges
+edges = blue | green | red
 
-# Find the contours
+# find contours
 img_ret, contours, hierarchy = cv2.findContours(edges.copy(), cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
 
 hierarchy = hierarchy[0]
@@ -228,7 +218,7 @@ for index_, contour_ in enumerate(contours):
     x, y, w, h = cv2.boundingRect(contour_)
 
     # Check the contour and it's bounding box
-    if keep(contour_) and include_box(index_, hierarchy, contour_):
+    if keep(contour_) and includeBox(index_, hierarchy, contour_):
         # It's a winner!
         keepers.append([contour_, [x, y, w, h]])
         if DEBUG:
